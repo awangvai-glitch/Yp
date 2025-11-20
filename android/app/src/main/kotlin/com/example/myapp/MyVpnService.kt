@@ -14,15 +14,14 @@ import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.io.FileInputStream
 import java.io.FileOutputStream
-import java.lang.Exception
+import java.io.PrintWriter
+import java.io.StringWriter
 
 class MyVpnService : VpnService() {
 
     private var vpnInterface: ParcelFileDescriptor? = null
     private var sshSession: Session? = null
     private val vpnThreads = mutableListOf<Thread>()
-    // PacketProcessor tidak ada di kode asli, saya asumsikan itu ada di file lain
-    // private val packetProcessor = PacketProcessor() 
 
     companion object {
         const val TAG = "MyVpnService"
@@ -33,14 +32,12 @@ class MyVpnService : VpnService() {
             methodChannel = channel
         }
 
-        // Mengirim log ke Flutter
         fun sendLog(message: String) {
             handler.post {
                 methodChannel?.invokeMethod("log", message)
             }
         }
         
-        // Memperbarui status koneksi dan juga mengirimkannya sebagai log
         fun updateStatus(status: String) {
              handler.post {
                 methodChannel?.invokeMethod("updateStatus", status)
@@ -50,6 +47,8 @@ class MyVpnService : VpnService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val mainThread = Thread {
+            // Perubahan: Tangkap Throwable, bukan hanya Exception, untuk memastikan
+            // tidak ada error yang lolos dan menyebabkan crash.
             try {
                 updateStatus("connecting")
                 sendLog("Memulai layanan VPN...")
@@ -64,7 +63,7 @@ class MyVpnService : VpnService() {
                 val payload = intent.getStringExtra("payload")
                 val customDns = intent.getStringExtra("dns")
 
-                sendLog("Konfigurasi diterima: Server=$server, Port SSH=$sshPort, Port TLS=$tlsPort")
+                sendLog("Konfigurasi: Server=$server, Port SSH=$sshPort, Port TLS=$tlsPort")
 
                 val jsch = JSch()
                 
@@ -74,7 +73,6 @@ class MyVpnService : VpnService() {
                     
                     if (!proxyHost.isNullOrBlank() && proxyPort != null && proxyPort > 0) {
                         sendLog("Menggunakan proxy: $proxyHost:$proxyPort")
-                        // Asumsi PayloadInjectingSocketFactory ada dan berfungsi
                         setSocketFactory(PayloadInjectingSocketFactory(payload, server, tlsPort))
                         this.host = proxyHost
                         this.port = proxyPort
@@ -85,10 +83,10 @@ class MyVpnService : VpnService() {
                     }
                 }
                 
-                sendLog("Mencoba menyambungkan sesi SSH ke ${sshSession?.host}:${sshSession?.port}...")
+                sendLog("Menyambungkan sesi SSH ke ${sshSession?.host}:${sshSession?.port}...")
                 sshSession?.connect(30000) // 30 detik timeout
 
-                if (sshSession?.isConnected != true) throw Exception("Koneksi SSH gagal. Periksa host, port, dan kredensial.")
+                if (sshSession?.isConnected != true) throw Exception("Koneksi SSH gagal. Periksa host, port, kredensial, dan payload.")
                 sendLog("Sesi SSH berhasil tersambung.")
 
                 val builder = Builder().setSession(this.javaClass.simpleName)
@@ -100,15 +98,18 @@ class MyVpnService : VpnService() {
                         builder.addDnsServer(customDns)
                         sendLog("Menggunakan DNS kustom: $customDns")
                     } catch (e: IllegalArgumentException) {
-                        sendLog("DNS kustom '$customDns' tidak valid. Menggunakan 8.8.8.8 sebagai fallback.")
+                        sendLog("DNS '$customDns' tidak valid. Fallback ke 8.8.8.8.")
                         builder.addDnsServer("8.8.8.8")
                     }
                 } else {
                     sendLog("Menggunakan DNS default: 8.8.8.8")
                     builder.addDnsServer("8.8.8.8")
                 }
+                
+                // Tambahkan MTU untuk mencegah fragmentasi pada beberapa jaringan
+                builder.setMtu(1500)
 
-                vpnInterface = builder.establish() ?: throw IllegalStateException("Gagal membuat antarmuka VPN.")
+                vpnInterface = builder.establish() ?: throw IllegalStateException("Gagal membuat antarmuka VPN. Pastikan izin telah diberikan.")
                 sendLog("Antarmuka VPN berhasil dibuat.")
 
                 val channel = sshSession?.openChannel("shell") as ChannelShell
@@ -120,10 +121,9 @@ class MyVpnService : VpnService() {
                 val vpnOutput = FileOutputStream(vpnInterface!!.fileDescriptor)
                 val sshInput = DataInputStream(channel.inputStream)
                 val sshOutput = DataOutputStream(channel.outputStream)
-
-                // Di VpnOutput, kita tidak menggunakan PacketProcessor, sesuai kode asli
-                vpnThreads.add(Thread(VpnOutput(vpnInput, sshOutput)).apply { start() })
-                vpnThreads.add(Thread(VpnInput(sshInput, vpnOutput)).apply { start() })
+                
+                vpnThreads.add(Thread(VpnOutput(vpnInput, sshOutput), "VpnOutputThread").apply { start() })
+                vpnThreads.add(Thread(VpnInput(sshInput, vpnOutput), "VpnInputThread").apply { start() })
 
                 updateStatus("connected")
                 sendLog("VPN berjalan dengan sukses.")
@@ -132,15 +132,21 @@ class MyVpnService : VpnService() {
                     Thread.sleep(1000)
                 }
 
-            } catch (e: Exception) {
-                Log.e(TAG, "VPN Error", e)
-                val errorMessage = e.message ?: "Terjadi kesalahan tidak diketahui"
-                sendLog("ERROR: $errorMessage")
+            } catch (t: Throwable) { // Tangkap Throwable
+                // Perubahan: Kirim stack trace lengkap ke Flutter untuk diagnosis
+                val sw = StringWriter()
+                t.printStackTrace(PrintWriter(sw))
+                val stackTraceString = sw.toString()
+
+                Log.e(TAG, "FATAL VPN Error", t)
+                val errorMessage = t.message ?: "Terjadi kesalahan fatal tidak diketahui"
+                sendLog("FATAL ERROR: $errorMessage\n$stackTraceString")
                 updateStatus("error")
             } finally {
                 shutdown()
             }
         }
+        mainThread.name = "VpnMainThread"
         mainThread.start()
         vpnThreads.add(mainThread)
 
@@ -151,6 +157,7 @@ class MyVpnService : VpnService() {
         sendLog("Memulai proses shutdown VPN...")
         updateStatus("disconnected")
         vpnThreads.forEach { it.interrupt() }
+        
         try { 
             if (sshSession?.isConnected == true) {
                 sshSession?.disconnect()
@@ -159,6 +166,7 @@ class MyVpnService : VpnService() {
         } catch (e: Exception) {
             sendLog("Exception saat disconnect SSH: ${e.message}")
         }
+        
         try {
              vpnInterface?.close()
              sendLog("Antarmuka VPN ditutup.")
@@ -172,7 +180,6 @@ class MyVpnService : VpnService() {
         shutdown()
     }
     
-    // Menghapus PacketProcessor dari constructor
     private class VpnOutput(private val vpnInput: FileInputStream, private val sshOutput: DataOutputStream) : Runnable {
         override fun run() {
             val buffer = ByteArray(32767)
@@ -180,7 +187,6 @@ class MyVpnService : VpnService() {
                 while (!Thread.currentThread().isInterrupted) {
                     val readBytes = vpnInput.read(buffer)
                     if (readBytes > 0) {
-                        // Logika pengiriman paket tanpa PacketProcessor
                         sshOutput.writeInt(readBytes)
                         sshOutput.write(buffer, 0, readBytes)
                         sshOutput.flush()
@@ -188,8 +194,7 @@ class MyVpnService : VpnService() {
                 }
             } catch (e: Exception) {
                  if (!Thread.currentThread().isInterrupted) {
-                    Log.e(TAG, "VpnOutput error", e)
-                    sendLog("Error pada VpnOutput: ${e.message}")
+                    Log.w(TAG, "VpnOutput diinterupsi: ${e.message}")
                  }
             }
         }
@@ -197,21 +202,21 @@ class MyVpnService : VpnService() {
 
     private class VpnInput(private val sshInput: DataInputStream, private val vpnOutput: FileOutputStream) : Runnable {
         override fun run() {
-            val buffer = ByteArray(32767)
             try {
                 while (!Thread.currentThread().isInterrupted) {
                     val packetLength = sshInput.readInt()
-                    if (packetLength > 0 && packetLength <= buffer.size) {
+                    if (packetLength > 0) {
+                        val buffer = ByteArray(packetLength)
                         sshInput.readFully(buffer, 0, packetLength)
                         vpnOutput.write(buffer, 0, packetLength)
                     } 
                 }
             } catch (e: java.io.EOFException) {
-                sendLog("Koneksi SSH ditutup oleh server.")
+                sendLog("Koneksi SSH ditutup oleh server (EOF).")
+                updateStatus("disconnected")
             } catch (e: Exception) {
                  if (!Thread.currentThread().isInterrupted) {
-                    Log.e(TAG, "VpnInput error", e)
-                    sendLog("Error pada VpnInput: ${e.message}")
+                    Log.w(TAG, "VpnInput diinterupsi: ${e.message}")
                  }
             }
         }

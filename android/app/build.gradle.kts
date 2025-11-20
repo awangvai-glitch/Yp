@@ -29,6 +29,12 @@ android {
     buildTypes {
         release {
             signingConfig = signingConfigs.getByName("debug")
+            // Mengaktifkan ProGuard (R8) dan menambahkan file aturan
+            isMinifyEnabled = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
         }
     }
     
@@ -41,6 +47,7 @@ android {
 flutter {
     source = "../.."
 }
+
 
 dependencies {
     implementation("com.jcraft:jsch:0.1.55")
