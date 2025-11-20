@@ -1,76 +1,50 @@
 package com.example.myapp
 
-import android.util.Log
 import com.jcraft.jsch.SocketFactory
 import java.io.InputStream
 import java.io.OutputStream
 import java.net.Socket
 
-/**
- * Pabrik soket ini melakukan dua hal:
- * 1. Membuat terowongan (tunnel) melalui proxy HTTP menggunakan perintah CONNECT.
- * 2. Menyuntikkan payload HTTP kustom setelah terowongan dibuat.
- */
 class PayloadInjectingSocketFactory(
     private val payload: String?,
-    private val sshHost: String,    // Host SSH tujuan (misal: your_server_ip)
-    private val sshTlsPort: Int // Port TLS/SSL di server SSH (misal: 443)
+    private val targetHost: String,
+    private val targetPort: Int
 ) : SocketFactory {
 
-    companion object {
-        const val TAG = "PayloadSocketFactory"
-    }
-
-    /**
-     * Dipanggil oleh JSch.
-     * @param host Host proxy yang akan dihubungi.
-     * @param port Port proxy yang akan dihubungi.
-     */
+    @Throws(Exception::class)
     override fun createSocket(host: String, port: Int): Socket {
-        Log.d(TAG, "Creating socket to proxy: $host:$port")
+        // Koneksi dibuat ke proxy, bukan ke target akhir secara langsung
         val socket = Socket(host, port)
 
-        try {
-            val outputStream = socket.getOutputStream()
-            val inputStream = socket.getInputStream()
-
-            // 1. Kirim perintah CONNECT ke proxy untuk membuat terowongan ke server SSH kita
-            val connectCmd = "CONNECT $sshHost:$sshTlsPort HTTP/1.1\r\nHost: $sshHost:$sshTlsPort\r\n\r\n"
-            Log.d(TAG, "Sending CONNECT command:\n$connectCmd")
-            outputStream.write(connectCmd.toByteArray())
-            outputStream.flush()
-
-            // 2. Baca respons dari proxy. Implementasi sederhana ini hanya mencari "200".
-            // Implementasi yang lebih kuat akan mem-parsing header HTTP secara penuh.
-            val buffer = ByteArray(1024)
-            val bytesRead = inputStream.read(buffer)
-            if (bytesRead > 0) {
-                val response = String(buffer, 0, bytesRead)
-                Log.d(TAG, "Proxy response:\n$response")
-                if (!response.contains(" 200 ")) {
-                    throw Exception("Proxy CONNECT command failed. Response: $response")
-                }
-            } else {
-                throw Exception("Proxy did not respond to CONNECT command.")
-            }
-
-            // 3. Jika ada payload, suntikkan sekarang setelah terowongan berhasil dibuat.
-            if (!payload.isNullOrBlank()) {
-                Log.d(TAG, "Injecting payload:\n$payload")
-                outputStream.write(payload.toByteArray())
+        if (!payload.isNullOrBlank()) {
+            try {
+                MyVpnService.sendLog("Mengirim payload...")
+                val outputStream = socket.outputStream
+                // Mengganti [crlf] dari payload dengan \r\n dan mengirimkannya
+                val processedPayload = payload.replace("[crlf]", "\r\n").toByteArray()
+                outputStream.write(processedPayload)
                 outputStream.flush()
+                MyVpnService.sendLog("Payload berhasil dikirim.")
+
+                // Tunggu sebentar untuk menerima balasan dari proxy (opsional, tapi baik untuk stabilitas)
+                // Ini bisa disesuaikan atau dibuat lebih cerdas dengan membaca sampai \r\n\r\n
+                Thread.sleep(500)
+
+            } catch (e: Exception) {
+                MyVpnService.sendLog("Gagal mengirim payload: ${e.message}")
+                socket.close()
+                throw e
             }
-
-            Log.d(TAG, "Socket to SSH server via proxy and payload is ready.")
-            return socket
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Error in PayloadInjectingSocketFactory", e)
-            socket.close()
-            throw e
         }
+
+        return socket
     }
 
-    override fun getInputStream(socket: Socket): InputStream = socket.inputStream
-    override fun getOutputStream(socket: Socket): OutputStream = socket.outputStream
+    override fun getInputStream(socket: Socket): InputStream {
+        return socket.inputStream
+    }
+
+    override fun getOutputStream(socket: Socket): OutputStream {
+        return socket.outputStream
+    }
 }

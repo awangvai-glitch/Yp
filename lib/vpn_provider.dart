@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:intl/intl.dart';
 
 class VpnProvider with ChangeNotifier {
   static const _platform = MethodChannel('com.example.myapp/vpn');
@@ -7,8 +8,11 @@ class VpnProvider with ChangeNotifier {
   String _status = 'disconnected';
   String get status => _status;
 
-  // Controllers for all text fields
-  final serverController = TextEditingController(text: 'your_server_ip');
+  final List<String> _logs = [];
+  List<String> get logs => _logs;
+
+  // ... (controllers remain the same) ...
+    final serverController = TextEditingController(text: 'your_server_ip');
   final sshPortController = TextEditingController(text: '22');
   final tlsPortController = TextEditingController(text: '443');
   final usernameController = TextEditingController(text: 'root');
@@ -19,22 +23,39 @@ class VpnProvider with ChangeNotifier {
   final payloadController = TextEditingController();
   final dnsController = TextEditingController(text: '1.1.1.1');
 
+
   VpnProvider() {
     _platform.setMethodCallHandler(_handleMethodCall);
   }
 
   Future<void> _handleMethodCall(MethodCall call) async {
+    final message = call.arguments as String;
+    _addLog(message); // Log everything that comes from native
+
+    // Handle status updates separately
     if (call.method == 'updateStatus') {
-      _status = call.arguments;
-      notifyListeners();
+      _status = message;
     }
+    notifyListeners();
+  }
+
+  void _addLog(String message) {
+    final timestamp = DateFormat('HH:mm:ss').format(DateTime.now());
+    _logs.insert(0, '$timestamp: $message');
+    notifyListeners();
+  }
+
+  void clearLogs() { // <-- Diubah menjadi public
+    _logs.clear();
+    notifyListeners();
   }
 
   Future<void> startVpn() async {
+    clearLogs(); // Memanggil versi public
+    _addLog('Memulai koneksi VPN...');
     _status = 'connecting';
     notifyListeners();
 
-    // Mengganti [crlf] dengan karakter asli \r\n
     final processedPayload = payloadController.text.replaceAll('[crlf]', '\r\n');
 
     try {
@@ -44,27 +65,29 @@ class VpnProvider with ChangeNotifier {
         'tlsPort': tlsPortController.text,
         'username': usernameController.text,
         'password': passwordController.text,
-        // New parameters
         'proxyHost': proxyHostController.text,
         'proxyPort': proxyPortController.text,
         'payload': processedPayload,
         'dns': dnsController.text,
       });
+       _addLog('Parameter koneksi dikirim ke sisi native.');
     } on PlatformException catch (e) {
       _status = 'error';
-      print("Failed to start VPN: '${e.message}'.");
+      _addLog('Error: ${e.message}');
       notifyListeners();
     }
   }
 
   Future<void> stopVpn() async {
+    _addLog('Menghentikan koneksi VPN...');
     try {
       await _platform.invokeMethod('stopVpn');
+      _addLog('Perintah stop berhasil dikirim.');
       _status = 'disconnected';
-      notifyListeners();
     } on PlatformException catch (e) {
-      print("Failed to stop VPN: '${e.message}'.");
+      _addLog('Error saat menghentikan VPN: ${e.message}');
     }
+    notifyListeners();
   }
 
   @override
