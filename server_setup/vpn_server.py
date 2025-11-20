@@ -1,149 +1,172 @@
-
 import asyncio
-import os
-import fcntl
-import struct
+import ssl
 import logging
+import sys
 
-# Konfigurasi logging
-logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(message)s')
+# --- Konfigurasi Logging ---
+logging.basicConfig(level=logging.INFO, format='[%(asctime)s] - %(levelname)s - %(message)s')
 
-# Konstanta untuk membuat TUN interface
-TUNSETIFF = 0x400454ca
-IFF_TUN = 0x0001
-IFF_NO_PI = 0x1000
+# --- Logika Utama ---
 
-async def handle_client(reader, writer):
+async def consume_payload(reader):
     """
-    Fungsi ini dipanggil untuk setiap koneksi klien yang masuk.
-    Namun, dalam mode SSH kita, kita hanya akan menggunakan stdin/stdout.
+    Membaca dan membuang data dari stream jika terlihat seperti payload HTTP.
+    Jika tidak, kembalikan data yang sudah dibaca karena itu mungkin awal dari handshake SSH.
     """
-    # Fungsi ini tidak akan digunakan secara langsung dalam mode SSH
-    pass
-
-def create_tun_interface():
-    """Membuat interface TUN virtual dan mengembalikannya."""
-    tun_fd = os.open('/dev/net/tun', os.O_RDWR)
-    # IFF_TUN: Buat TUN device (paket IP)
-    # IFF_NO_PI: Jangan sertakan informasi protokol, karena kita sudah berurusan dengan paket IP mentah
-    ifr = struct.pack('16sH', b'tun0', IFF_TUN | IFF_NO_PI)
-    fcntl.ioctl(tun_fd, TUNSETIFF, ifr)
-    logging.info("Interface tun0 dibuat.")
-    return tun_fd
-
-def configure_tun_interface(ip='10.8.0.1', peer_ip='10.8.0.2', mtu=1500):
-    """Mengkonfigurasi alamat IP dan mengaktifkan interface tun0."""
-    logging.info(f"Mengkonfigurasi interface tun0: IP={ip}, Peer={peer_ip}")
-    # Set IP address untuk tun0
-    os.system(f'ip addr add {ip}/24 dev tun0')
-    # Bawa interface "up"
-    os.system(f'ip link set dev tun0 up')
-    # Atur MTU (Maximum Transmission Unit)
-    os.system(f'ip link set tun0 mtu {mtu}')
-    # Aktifkan IP forwarding
-    os.system('sysctl -w net.ipv4.ip_forward=1')
-    logging.info("IP forwarding diaktifkan.")
+    logging.info("Memeriksa keberadaan payload HTTP...")
     
-    # Aturan NAT untuk mengizinkan lalu lintas dari VPN ke internet
-    # Ini adalah kunci untuk membuat lalu lintas bisa keluar!
-    # Gantilah 'eth0' dengan interface jaringan utama server Anda jika berbeda (misal: ens3, wlan0)
-    main_interface = get_main_network_interface()
-    if not main_interface:
-        logging.error("Tidak dapat menemukan interface jaringan utama. Atur secara manual.")
-        return
+    try:
+        # Coba intip beberapa byte data awal tanpa menunggu terlalu lama
+        initial_data = await asyncio.wait_for(reader.read(40), timeout=3.0)
+    except asyncio.TimeoutError:
+        logging.info("Tidak ada data yang diterima dalam 3 detik. Mengasumsikan tidak ada payload.")
+        return b'' # Tidak ada data, tidak ada sisa
+    
+    if not initial_data:
+        logging.info("Koneksi ditutup sebelum data apa pun diterima.")
+        return None
+
+    # Periksa apakah data awal terlihat seperti metode HTTP
+    http_methods = [b'GET ', b'POST ', b'CONNECT ', b'PUT ', b'DELETE ', b'HEAD ', b'OPTIONS ']
+    is_http = any(initial_data.startswith(method) for method in http_methods)
+
+    if not is_http:
+        logging.info("Data awal tidak terlihat seperti HTTP. Mengasumsikan tidak ada payload.")
+        return initial_data # Kembalikan data karena ini bagian dari handshake SSH
+
+    # --- Jika ini adalah payload HTTP, buang header-nya ---
+    logging.info("Payload HTTP terdeteksi. Membuang header...")
+    buffer = initial_data
+    end_marker = b'\r\n\r\n'
+
+    try:
+        while end_marker not in buffer:
+            # Lanjutkan membaca sampai akhir header ditemukan
+            chunk = await asyncio.wait_for(reader.read(1024), timeout=5.0)
+            if not chunk:
+                logging.warning("Koneksi ditutup saat sedang membuang sisa payload.")
+                return None
+            buffer += chunk
         
-    logging.info(f"Menggunakan {main_interface} sebagai interface keluar utama.")
-    os.system(f'iptables -t nat -A POSTROUTING -o {main_interface} -j MASQUERADE')
-    logging.info("Aturan NAT (iptables) ditambahkan.")
+        payload_end_pos = buffer.find(end_marker) + len(end_marker)
+        logging.info(f"Payload ditemukan ({payload_end_pos} bytes) dan berhasil dibuang.")
+        
+        spillover = buffer[payload_end_pos:]
+        if spillover:
+            logging.info(f"Ditemukan {len(spillover)} bytes data sisa setelah payload.")
+        return spillover
 
-def get_main_network_interface():
-    """Mencoba mendeteksi interface jaringan utama yang memiliki default route."""
-    try:
-        with open('/proc/net/route') as f:
-            for line in f:
-                parts = line.strip().split()
-                if parts[1] == '00000000': # Default gateway
-                    return parts[0]
-    except Exception:
-        return 'eth0' # Fallback ke eth0 jika gagal
-    return 'eth0'
-
-async def read_from_stdin(tun_writer):
-    """Membaca data dari stdin (dari klien SSH) dan menuliskannya ke TUN."""
-    loop = asyncio.get_event_loop()
-    reader = asyncio.StreamReader()
-    protocol = asyncio.StreamReaderProtocol(reader)
-    await loop.connect_read_pipe(lambda: protocol, os.fdopen(0, 'rb'))
-
-    logging.info("Mendengarkan data dari klien SSH (stdin)...")
-    try:
-        while not reader.at_eof():
-            # Baca panjang paket (4 byte integer)
-            len_bytes = await reader.readexactly(4)
-            packet_len = struct.unpack('>I', len_bytes)[0]
-            
-            if packet_len > 0:
-                # Baca paket itu sendiri
-                packet_data = await reader.readexactly(packet_len)
-                # Tulis paket langsung ke TUN interface
-                os.write(tun_writer, packet_data)
-                # logging.info(f"[STDIN -> TUN] Menulis {packet_len} bytes ke tun0.")
-    except asyncio.IncompleteReadError:
-        logging.info("Koneksi SSH ditutup dari klien.")
+    except asyncio.TimeoutError:
+        logging.error("Timeout saat menunggu akhir dari payload HTTP. Koneksi mungkin korup.")
+        return None
     except Exception as e:
-        logging.error(f"Error saat membaca dari stdin: {e}")
+        logging.error(f"Error saat membuang payload: {e}")
+        return None
 
-async def read_from_tun(tun_reader, stdout_writer):
-    """Membaca data dari TUN (dari internet) dan menuliskannya ke stdout (ke klien SSH)."""
-    logging.info("Mendengarkan data dari tun0 (internet)...")
+async def forward_data(reader, writer, direction):
+    """
+    Membaca data dari `reader` dan meneruskannya ke `writer` secara terus-menerus.
+    """
     try:
-        while True:
-            # Baca paket dari TUN interface
-            packet_data = os.read(tun_reader, 2048)
-            if packet_data:
-                # Kirim panjang paket
-                packet_len = len(packet_data)
-                stdout_writer.write(struct.pack('>I', packet_len))
-                
-                # Kirim paket itu sendiri
-                stdout_writer.write(packet_data)
-                await stdout_writer.drain()
-                # logging.info(f"[TUN -> STDOUT] Mengirim {packet_len} bytes ke klien SSH.")
+        while not reader.at_eof() and not writer.is_closing():
+            data = await reader.read(4096) # Baca dalam chunk 4KB
+            if not data:
+                break
+            writer.write(data)
+            await writer.drain()
+    except (asyncio.CancelledError, ConnectionResetError):
+        pass # Ini normal saat koneksi ditutup
     except Exception as e:
-        logging.error(f"Error saat membaca dari TUN: {e}")
+        if not writer.is_closing():
+            logging.error(f"Error saat meneruskan data ke {direction}: {e}")
+    finally:
+        if not writer.is_closing():
+            writer.close()
+
+async def handle_client(client_reader, client_writer):
+    """
+    Fungsi untuk menangani setiap koneksi klien yang masuk.
+    """
+    client_addr = client_writer.get_extra_info('peername')
+    logging.info(f"Koneksi diterima dari {client_addr}")
+
+    ssh_reader = None
+    ssh_writer = None
+
+    try:
+        # 1. Buang payload HTTP jika ada
+        spillover_data = await consume_payload(client_reader)
+        if spillover_data is None:
+            return # Terjadi error atau koneksi ditutup
+
+        # 2. Buka koneksi ke server SSH lokal
+        logging.info(f"Membuka koneksi ke server SSH di {SSH_HOST}:{SSH_PORT}...")
+        ssh_reader, ssh_writer = await asyncio.open_connection(SSH_HOST, SSH_PORT)
+        logging.info("Koneksi ke server SSH lokal berhasil.")
+        
+        # 3. Tulis data sisa (jika ada) ke server SSH
+        if spillover_data:
+            ssh_writer.write(spillover_data)
+            await ssh_writer.drain()
+
+        # 4. Buat jembatan dua arah untuk meneruskan data
+        task_client_to_ssh = asyncio.create_task(forward_data(client_reader, ssh_writer, "SSH Server"))
+        task_ssh_to_client = asyncio.create_task(forward_data(ssh_reader, client_writer, "Klien"))
+
+        await asyncio.gather(task_client_to_ssh, task_ssh_to_client)
+
+    except ConnectionRefusedError:
+        logging.error(f"FATAL: Koneksi ke server SSH di {SSH_HOST}:{SSH_PORT} ditolak. Pastikan layanan sshd berjalan.")
+    except Exception as e:
+        logging.error(f"Error tidak terduga di handle_client: {e}")
+    finally:
+        logging.info(f"Menutup koneksi dari {client_addr}")
+        if not client_writer.is_closing():
+            client_writer.close()
+        if ssh_writer and not ssh_writer.is_closing():
+            ssh_writer.close()
 
 async def main():
-    """Fungsi utama untuk menjalankan server."""
-    logging.info("Memulai server VPN...")
+    if len(sys.argv) != 5:
+        print(f"Penggunaan: python3 {sys.argv[0]} <listen_host> <listen_port> <path/ke/sertifikat.pem> <path/ke/kunci_privat.pem>")
+        print("Contoh: python3 vpn_server.py 0.0.0.0 443 /etc/ssl/certs/mycert.pem /etc/ssl/private/mykey.pem")
+        sys.exit(1)
 
-    # Pastikan skrip dijalankan sebagai root
-    if os.geteuid() != 0:
-        logging.error("Skrip ini harus dijalankan sebagai root.")
-        return
-
-    tun_fd = create_tun_interface()
-    configure_tun_interface()
-
-    loop = asyncio.get_event_loop()
-
-    # Dapatkan writer untuk stdout
-    writer_transport, writer_protocol = await loop.connect_write_pipe(
-        asyncio.streams.FlowControlMixin, os.fdopen(1, 'wb')
-    )
-    stdout_writer = asyncio.StreamWriter(writer_transport, writer_protocol, None, loop)
-
-    # Buat dua tugas yang berjalan bersamaan
-    task_stdin = asyncio.create_task(read_from_stdin(tun_fd))
-    task_tun = asyncio.create_task(read_from_tun(tun_fd, stdout_writer))
+    listen_host = sys.argv[1]
+    listen_port = int(sys.argv[2])
+    cert_file = sys.argv[3]
+    key_file = sys.argv[4]
     
-    await asyncio.gather(task_stdin, task_tun)
+    global SSH_HOST, SSH_PORT
+    SSH_HOST = '127.0.0.1' # Selalu terhubung ke layanan SSH di mesin lokal
+    SSH_PORT = 22
+    
+    try:
+        ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+        ssl_context.load_cert_chain(certfile=cert_file, keyfile=key_file)
+        logging.info(f"Sertifikat SSL/TLS dari '{cert_file}' berhasil dimuat.")
+    except Exception as e:
+        logging.error(f"FATAL: Gagal memuat sertifikat SSL/TLS. Pastikan path benar dan izin sesuai. Error: {e}")
+        sys.exit(1)
+
+    server = await asyncio.start_server(
+        handle_client,
+        listen_host,
+        listen_port,
+        ssl=ssl_context
+    )
+
+    addrs = ', '.join(str(sock.getsockname()) for sock in server.sockets)
+    logging.info(f'Server berjalan di {addrs}, mode TLS/SSL aktif.')
+    logging.info(f"Meneruskan koneksi yang masuk ke {SSH_HOST}:{SSH_PORT}")
+
+    async with server:
+        await server.serve_forever()
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logging.info("Server dihentikan.")
-        # Bersihkan aturan iptables saat keluar
-        main_interface = get_main_network_interface()
-        os.system(f'iptables -t nat -D POSTROUTING -o {main_interface} -j MASQUERADE')
-        logging.info("Aturan NAT (iptables) dihapus.")
+        logging.info("Server dihentikan oleh pengguna.")
+    except Exception as e:
+        logging.error(f"Server berhenti karena error: {e}")

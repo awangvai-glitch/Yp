@@ -13,15 +13,14 @@ class MainActivity: FlutterActivity() {
     private var pendingConnectResult: MethodChannel.Result? = null
 
     companion object {
-        // Variabel statis untuk menyimpan argumen, agar bisa diakses di onActivityResult
+        // Gunakan HashMap<String, Any?> untuk mengakomodasi tipe data yang berbeda jika perlu
         var vpnArguments: HashMap<String, String>? = null
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
-        channel.setMethodCallHandler {
-            call, result ->
+        channel.setMethodCallHandler { call, result ->
             when (call.method) {
                 "startVpn" -> {
                     pendingConnectResult = result
@@ -30,12 +29,14 @@ class MainActivity: FlutterActivity() {
                         result.error("INVALID_ARGUMENT", "Arguments cannot be null", null)
                         return@setMethodCallHandler
                     }
-                    vpnArguments = args
+                    vpnArguments = args // Simpan argumen untuk onActivityResult
 
                     val intent = VpnService.prepare(this)
                     if (intent != null) {
+                        // Minta izin ke pengguna
                         startActivityForResult(intent, 1)
                     } else {
+                        // Izin sudah diberikan, langsung lanjutkan
                         onActivityResult(1, Activity.RESULT_OK, null)
                     }
                 }
@@ -48,27 +49,31 @@ class MainActivity: FlutterActivity() {
             }
         }
 
-        // Inisialisasi MyVpnService dengan method channel
+        // Berikan referensi MethodChannel ke VpnService
         MyVpnService.setMethodChannel(channel)
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == 1 && resultCode == Activity.RESULT_OK) {
-            val intent = Intent(this, MyVpnService::class.java).apply {
-                putExtra("server", vpnArguments?.get("server"))
-                putExtra("sshPort", vpnArguments?.get("sshPort"))
-                putExtra("tlsPort", vpnArguments?.get("tlsPort"))
-                putExtra("username", vpnArguments?.get("username"))
-                putExtra("password", vpnArguments?.get("password"))
+        if (requestCode == 1) {
+            if (resultCode == Activity.RESULT_OK) {
+                // Pengguna memberikan izin
+                val intent = Intent(this, MyVpnService::class.java).apply {
+                    // Ambil semua argumen yang disimpan dan teruskan ke service
+                    vpnArguments?.forEach { (key, value) ->
+                        putExtra(key, value)
+                    }
+                }
+                startService(intent)
+                pendingConnectResult?.success(null)
+            } else {
+                // Pengguna menolak izin
+                MyVpnService.updateStatus("disconnected")
+                pendingConnectResult?.error("PERMISSION_DENIED", "User did not grant VPN permission", null)
             }
-            startService(intent)
-            pendingConnectResult?.success(null)
-        } else {
-            MyVpnService.methodChannel?.invokeMethod("updateStatus", "disconnected")
-            pendingConnectResult?.error("PERMISSION_DENIED", "User did not grant VPN permission", null)
+            // Bersihkan state setelah selesai
+            pendingConnectResult = null
+            vpnArguments = null
         }
-        pendingConnectResult = null
-        vpnArguments = null
     }
 }

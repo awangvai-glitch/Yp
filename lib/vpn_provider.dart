@@ -1,104 +1,83 @@
-import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-
-enum VpnStatus {
-  disconnected,
-  connecting,
-  connected,
-  error,
-}
 
 class VpnProvider with ChangeNotifier {
   static const _platform = MethodChannel('com.example.myapp/vpn');
 
-  VpnStatus _status = VpnStatus.disconnected;
-  String _server = '';
-  String _sshPort = '22';
-  String _tlsPort = '443';
-  String _username = '';
-  String _password = '';
+  String _status = 'disconnected';
+  String get status => _status;
 
-  VpnStatus get status => _status;
-  String get server => _server;
-  String get sshPort => _sshPort;
-  String get tlsPort => _tlsPort;
-  String get username => _username;
-  String get password => _password;
+  // Controllers for all text fields
+  final serverController = TextEditingController(text: 'your_server_ip');
+  final sshPortController = TextEditingController(text: '22');
+  final tlsPortController = TextEditingController(text: '443');
+  final usernameController = TextEditingController(text: 'root');
+  final passwordController = TextEditingController(text: 'your_password');
+
+  final proxyHostController = TextEditingController();
+  final proxyPortController = TextEditingController();
+  final payloadController = TextEditingController();
+  final dnsController = TextEditingController(text: '1.1.1.1');
 
   VpnProvider() {
-    // Dengar status dari native side (akan diimplementasikan)
-    _platform.setMethodCallHandler(_handlePlatformCall);
+    _platform.setMethodCallHandler(_handleMethodCall);
   }
 
-  Future<void> _handlePlatformCall(MethodCall call) async {
-    switch (call.method) {
-      case 'updateStatus':
-        final statusName = call.arguments as String;
-        final newStatus = VpnStatus.values.firstWhere(
-          (e) => e.name == statusName,
-          orElse: () => VpnStatus.error,
-        );
-        setStatus(newStatus);
-        break;
-      default:
-        break;
+  Future<void> _handleMethodCall(MethodCall call) async {
+    if (call.method == 'updateStatus') {
+      _status = call.arguments;
+      notifyListeners();
     }
   }
 
-  void setServer(String value) {
-    _server = value;
+  Future<void> startVpn() async {
+    _status = 'connecting';
     notifyListeners();
-  }
 
-  void setSshPort(String value) {
-    _sshPort = value;
-    notifyListeners();
-  }
+    // Mengganti [crlf] dengan karakter asli \r\n
+    final processedPayload = payloadController.text.replaceAll('[crlf]', '\r\n');
 
-  void setTlsPort(String value) {
-    _tlsPort = value;
-    notifyListeners();
-  }
-
-  void setUsername(String value) {
-    _username = value;
-    notifyListeners();
-  }
-
-  void setPassword(String value) {
-    _password = value;
-    notifyListeners();
-  }
-
-  void setStatus(VpnStatus newStatus) {
-    _status = newStatus;
-    notifyListeners();
-  }
-
-  Future<void> connect() async {
-    setStatus(VpnStatus.connecting);
     try {
-      await _platform.invokeMethod('startVpn', {
-        'server': _server,
-        'sshPort': _sshPort,
-        'tlsPort': _tlsPort,
-        'username': _username,
-        'password': _password,
+      await _platform.invokeMethod('startVpn', <String, String>{
+        'server': serverController.text,
+        'sshPort': sshPortController.text,
+        'tlsPort': tlsPortController.text,
+        'username': usernameController.text,
+        'password': passwordController.text,
+        // New parameters
+        'proxyHost': proxyHostController.text,
+        'proxyPort': proxyPortController.text,
+        'payload': processedPayload,
+        'dns': dnsController.text,
       });
-      // Status akan diupdate oleh native side melalui _handlePlatformCall
     } on PlatformException catch (e) {
+      _status = 'error';
       print("Failed to start VPN: '${e.message}'.");
-      setStatus(VpnStatus.error);
+      notifyListeners();
     }
   }
 
-  Future<void> disconnect() async {
+  Future<void> stopVpn() async {
     try {
       await _platform.invokeMethod('stopVpn');
-      setStatus(VpnStatus.disconnected);
+      _status = 'disconnected';
+      notifyListeners();
     } on PlatformException catch (e) {
       print("Failed to stop VPN: '${e.message}'.");
-      setStatus(VpnStatus.error);
     }
+  }
+
+  @override
+  void dispose() {
+    serverController.dispose();
+    sshPortController.dispose();
+    tlsPortController.dispose();
+    usernameController.dispose();
+    passwordController.dispose();
+    proxyHostController.dispose();
+    proxyPortController.dispose();
+    payloadController.dispose();
+    dnsController.dispose();
+    super.dispose();
   }
 }
