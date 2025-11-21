@@ -3,96 +3,59 @@ package com.example.myapp
 import android.app.Activity
 import android.content.Intent
 import android.net.VpnService
+import android.os.Handler
+import android.os.Looper
+import android.util.Log
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity: FlutterActivity() {
-    private val CHANNEL = "com.example.myapp/vpn"
-    private lateinit var channel: MethodChannel
-
-    // Gunakan variabel instance untuk menghindari masalah dengan state statis
-    private var vpnLaunchArgs: HashMap<String, String>? = null
-    private var vpnLaunchResult: MethodChannel.Result? = null
+    private val TAG = "MainActivity"
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
+        // Inisialisasi channel di companion object
+        Companion.channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
 
-        // Berikan referensi MethodChannel ke VpnService agar bisa mengirim log/status
-        MyVpnService.setMethodChannel(channel)
+        Log.d(TAG, "Flutter Engine configured and MethodChannel initialized.")
 
-        channel.setMethodCallHandler { call, result ->
+        // Handler untuk panggilan dari Flutter
+        Companion.channel?.setMethodCallHandler { call, result ->
             when (call.method) {
                 "startVpn" -> {
-                    val args = call.arguments as? HashMap<String, String>
-                    if (args == null) {
-                        result.error("INVALID_ARGUMENT", "Argumen tidak boleh null", null)
-                        return@setMethodCallHandler
-                    }
-
-                    // Simpan argumen dan hasil untuk digunakan setelah izin diberikan
-                    vpnLaunchArgs = args
-                    vpnLaunchResult = result
-
-                    val intent = VpnService.prepare(this)
-                    if (intent != null) {
-                        // Izin belum diberikan, tampilkan dialog sistem
-                        startActivityForResult(intent, 1)
-                    } else {
-                        // Izin sudah ada, langsung mulai service
-                        startVpnService()
-                    }
+                    Log.d(TAG, "Received startVpn call, but VPN functionality is disabled.")
+                    result.error("UNAVAILABLE", "VPN functionality is currently disabled.", null)
                 }
                 "stopVpn" -> {
-                    val intent = Intent(this, MyVpnService::class.java)
-                    stopService(intent)
-                    result.success(null) // Memberi tahu Flutter bahwa perintah stop berhasil
+                     Log.d(TAG, "Received stopVpn call, but VPN functionality is disabled.")
+                    result.success(null)
                 }
                 else -> result.notImplemented()
             }
         }
     }
 
-    // Fungsi terpusat untuk memulai layanan VPN
-    private fun startVpnService() {
-        if (vpnLaunchArgs == null || vpnLaunchResult == null) {
-            // Ini bisa terjadi jika aktivitas Android dihancurkan & dibuat ulang oleh OS
-            MyVpnService.sendLog("Error: State aplikasi hilang. Coba lagi.")
-            vpnLaunchResult?.error("STATE_LOST", "Silakan coba sambungkan lagi.", null)
-            MyVpnService.updateStatus("disconnected")
-            cleanupVpnLaunchState()
-            return
-        }
+    companion object {
+        private const val CHANNEL = "com.example.myapp/vpn"
+        private var channel: MethodChannel? = null
 
-        val intent = Intent(this, MyVpnService::class.java).apply {
-            vpnLaunchArgs?.forEach { (key, value) ->
-                putExtra(key, value)
+        // Fungsi statis untuk mengirim log ke Flutter
+        fun sendLog(message: String) {
+            // Pastikan dieksekusi di UI thread
+            Handler(Looper.getMainLooper()).post {
+                 // Log ke konsol Android karena fungsionalitas UI tidak aktif
+                 Log.d("MainActivity-Companion", "Log to Flutter: $message")
+                // channel?.invokeMethod("log", message)
             }
         }
-        startService(intent)
-        vpnLaunchResult?.success(null) // Memberi tahu Flutter bahwa proses start berhasil dimulai
-        cleanupVpnLaunchState() // Bersihkan setelah digunakan
-    }
 
-    // Fungsi untuk membersihkan state setelah proses launch selesai atau gagal
-    private fun cleanupVpnLaunchState() {
-        vpnLaunchArgs = null
-        vpnLaunchResult = null
-    }
-
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == 1) {
-            if (resultCode == Activity.RESULT_OK) {
-                // Pengguna memberikan izin, sekarang mulai service
-                startVpnService()
-            } else {
-                // Pengguna menolak izin
-                MyVpnService.sendLog("Izin VPN ditolak oleh pengguna.")
-                vpnLaunchResult?.error("PERMISSION_DENIED", "Izin VPN tidak diberikan.", null)
-                MyVpnService.updateStatus("disconnected")
-                cleanupVpnLaunchState()
+        // Fungsi statis untuk memperbarui status koneksi di Flutter
+        fun updateStatus(status: String) {
+            Handler(Looper.getMainLooper()).post {
+                 // Log ke konsol Android karena fungsionalitas UI tidak aktif
+                 Log.d("MainActivity-Companion", "Status update to Flutter: $status")
+                // channel?.invokeMethod("status", status)
             }
         }
     }

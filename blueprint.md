@@ -1,59 +1,34 @@
 # Blueprint: Aplikasi Android Advanced Tunneling (Seperti HTTP Injector)
 
-Dokumen ini menguraikan arsitektur dan rencana implementasi untuk aplikasi Flutter yang berfungsi sebagai alat tunneling canggih, menggabungkan koneksi SSH, proxy HTTP, injeksi payload, dan DNS kustom.
+Dokumen ini menguraikan arsitektur dan rencana implementasi untuk aplikasi Flutter yang berfungsi sebagai alat tunneling canggih, menggabungkan koneksi SSH, SNI, proxy HTTP, injeksi payload, dan DNS kustom.
 
 ## Ikhtisar & Tujuan
 
 Aplikasi ini berevolusi dari klien VPN sederhana menjadi alat yang sangat fleksibel untuk melewati batasan jaringan yang ketat. Pengguna dapat menumpuk beberapa protokol untuk menyamarkan lalu lintas mereka dan mengarahkannya melalui proxy.
 
 **Alur Koneksi Utama:**
-`Aplikasi Android -> (HTTP Proxy) -> (Injeksi Payload) -> Server SSH/TLS -> Internet`
+`Aplikasi Android -> (Proxy) -> SSL/TLS Handshake dengan SNI -> (Injeksi Payload) -> Server SSH -> Internet`
 
-## Rencana Implementasi
+## Status Proyek: Sisi Flutter Selesai
 
-### 1. Perubahan Antarmuka Pengguna (`lib/vpn_screen.dart`)
-- Menambahkan kolom input untuk:
-  - **Proxy Host:** Alamat IP/hostname dari HTTP Proxy.
-  - **Proxy Port:** Port dari HTTP Proxy (misal: 8080).
-  - **Payload:** Kolom teks multi-baris untuk payload HTTP kustom.
-  - **DNS Kustom:** Kolom teks untuk server DNS (misal: 1.1.1.1).
-- Mengubah tata letak untuk mengakomodasi semua kolom baru secara intuitif.
+- **Antarmuka Pengguna (`lib/vpn_screen.dart`):** Lengkap. Semua kolom input yang diperlukan, termasuk panel "Konfigurasi Lanjutan" yang dapat diperluas, telah diimplementasikan.
+- **Manajemen State (`lib/vpn_provider.dart`):** Lengkap. Provider dengan andal mengelola semua input pengguna dan status koneksi.
+- **Komunikasi Native (`MethodChannel`):** Lengkap dan Teruji. Provider dengan benar mengirimkan SEMUA parameter konfigurasi ke sisi native.
+- **Pengujian (`test/widget_test.dart`):** Lengkap. Tes otomatis memverifikasi bahwa antarmuka pengguna memicu panggilan native yang benar dengan argumen yang benar, memastikan integritas sisi Flutter.
 
-### 2. State Management & Alur Data (`lib/vpn_provider.dart`)
-- Memperbarui state untuk menyimpan semua nilai konfigurasi baru (proxy, payload, dns).
-- Memodifikasi fungsi `startVpn` untuk mengumpulkan semua parameter ini ke dalam sebuah map dan mengirimkannya melalui platform channel.
+## Langkah Selanjutnya: Implementasi Sisi Android
 
-### 3. Jembatan Native (`MainActivity.kt`)
-- Mengadaptasi handler `MethodChannel` untuk menerima map argumen yang diperluas.
-- Mengekstrak semua parameter (termasuk yang baru) dan meneruskannya ke `MyVpnService` menggunakan `Intent.putExtra()`.
+Pekerjaan yang tersisa adalah secara eksklusif di sisi kode native Android.
 
-### 4. Logika Inti Tunneling (`MyVpnService.kt`)
-- **Menerima Konfigurasi:** Membaca semua data tambahan dari Intent di `onStartCommand`.
-- **Implementasi Koneksi Proxy:**
-  - Sebelum membuat `Session` JSch, buat objek `ProxyHTTP`.
-  - Atur proxy ini pada sesi SSH (`session.setProxy(proxy)`). JSch akan secara internal menangani pengiriman perintah `CONNECT` ke proxy.
-- **Implementasi Injeksi Payload:**
-  - Setelah koneksi soket melalui proxy berhasil dibuat (`session.connect()`), dapatkan akses ke `Socket` yang mendasarinya.
-  - Tulis string `payload` ke `socket.getOutputStream()` **sebelum** memulai proses autentikasi SSH lebih lanjut.
-- **Implementasi DNS Kustom:**
-  - Saat menggunakan `VpnService.Builder`, panggil `builder.addDnsServer(customDns)` dengan nilai yang diterima dari Intent. Tambahkan penanganan kesalahan untuk alamat DNS yang tidak valid.
+### 1. Jembatan Native (`MainActivity.kt`)
+- **Status:** Selesai.
+- **Detail:** Handler `MethodChannel` dengan benar menerima semua argumen dari Flutter dan meneruskannya ke `MyVpnService` melalui `Intent.putExtra()`. Logging telah ditambahkan untuk memverifikasi penerimaan data.
 
-### 5. Penyesuaian Sisi Server (`server_setup/vpn_server.py`)
-- **Penanganan Payload:**
-  - Di awal setiap koneksi klien yang baru, tambahkan loop untuk membaca data dari soket klien.
-  - Terus baca dan buang data sampai urutan byte `b'\r\n\r\n'` terdeteksi.
-  - Setelah itu, lanjutkan dengan alur kerja penerusan data SSH yang sudah ada.
-
-### 6. Alur Kerja Koneksi (Diperbarui)
-1.  Pengguna mengisi semua detail koneksi (SSH, Proxy, Payload, DNS) di `VpnScreen`.
-2.  UI memanggil metode di `VpnProvider`.
-3.  `VpnProvider` memperbarui status dan memanggil `startVpn` pada platform channel dengan semua argumen.
-4.  `MainActivity.kt` menerima panggilan, meminta izin VPN, lalu memulai `MyVpnService` dengan semua detail konfigurasi dalam Intent.
-5.  `MyVpnService` melakukan urutan koneksi:
-    a. Menghubungi HTTP Proxy.
-    b. Meminta proxy untuk membuat tunnel ke Server SSH.
-    c. Mengirimkan Payload melalui tunnel tersebut.
-    d. Memulai koneksi dan autentikasi SSH.
-    e. Membangun antarmuka VPN lokal dengan DNS kustom.
-    f. Mulai merutekan lalu lintas.
-6.  Status koneksi dikirim kembali ke Flutter untuk memperbarui UI.
+### 2. Logika Inti Tunneling (`MyVpnService.kt`)
+- **Status:** **Tugas Selanjutnya.**
+- **Detail:**
+  - **Menerima Konfigurasi:** Di dalam metode `onStartCommand`, ekstrak semua parameter (`server`, `sshPort`, `proxyHost`, `payload`, `sni`, dll.) dari `Intent` yang masuk.
+  - **Menerapkan Logika Koneksi:** Gunakan parameter yang diekstrak untuk mengonfigurasi dan memulai koneksi tunnel Anda yang sebenarnya. Ini melibatkan penggunaan library seperti JSch dan menerapkan logika kustom untuk menangani proxy, injeksi payload, dan SNI.
+  - **Implementasi SNI:** Jika nilai `sni` ada, logika koneksi Anda harus membuat `SSLSocket` dan mengatur parameter SNI **sebelum** terhubung.
+  - **Injeksi Payload:** Setelah koneksi TCP/SSL awal dibuat, suntikkan string `payload` ke dalam aliran output socket.
+  - **DNS Kustom:** Gunakan nilai `dns` saat membangun antarmuka VpnService menggunakan `VpnService.Builder().addDnsServer(...)`.

@@ -26,21 +26,6 @@
             </intent-filter>
         </activity>
 
-        <service
-            android:name=".MyVpnService"
-            android:exported="false"
-            android:permission="android.permission.BIND_VPN_SERVICE"
-            android:foregroundServiceType="specialUse"> <!-- Perubahan di sini -->
-            <intent-filter>
-                <action android:name="android.net.VpnService"/>
-            </intent-filter>
-            <meta-data
-                android:name="android.app.lib_name"
-                android:value="flutter" />
-             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                 android:value="VPN"/>
-        </service>
-
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />

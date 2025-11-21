@@ -6,19 +6,20 @@ import 'vpn_screen.dart';
 
 void main() {
   runApp(
+    // Gunakan MultiProvider untuk menyediakan semua state management di level teratas
     MultiProvider(
       providers: [
-        ChangeNotifierProvider(create: (context) => VpnProvider()),
         ChangeNotifierProvider(create: (context) => ThemeProvider()),
+        ChangeNotifierProvider(create: (context) => VpnProvider()),
       ],
       child: const MyApp(),
     ),
   );
 }
 
-// Theme manager
+// ThemeProvider tetap sama
 class ThemeProvider with ChangeNotifier {
-  ThemeMode _themeMode = ThemeMode.system;
+  ThemeMode _themeMode = ThemeMode.dark;
 
   ThemeMode get themeMode => _themeMode;
 
@@ -33,19 +34,21 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const Color primarySeedColor = Colors.blue;
+    // Warna dasar untuk menghasilkan skema warna Material 3
+    const Color primarySeedColor = Colors.deepPurple;
 
+    // Definisikan TextTheme yang konsisten menggunakan Google Fonts
     final TextTheme appTextTheme = TextTheme(
       displayLarge: GoogleFonts.oswald(fontSize: 57, fontWeight: FontWeight.bold),
       titleLarge: GoogleFonts.roboto(fontSize: 22, fontWeight: FontWeight.w500),
       bodyMedium: GoogleFonts.roboto(fontSize: 14),
-      labelLarge: GoogleFonts.roboto(fontSize: 14, fontWeight: FontWeight.bold),
+      bodySmall: GoogleFonts.roboto(fontSize: 12),
+      headlineSmall: GoogleFonts.oswald(fontSize: 24, fontWeight: FontWeight.w600),
     );
 
-    // Light Theme
+    // Tema Terang Modern
     final ThemeData lightTheme = ThemeData(
       useMaterial3: true,
-      brightness: Brightness.light,
       colorScheme: ColorScheme.fromSeed(
         seedColor: primarySeedColor,
         brightness: Brightness.light,
@@ -54,80 +57,47 @@ class MyApp extends StatelessWidget {
       appBarTheme: AppBarTheme(
         backgroundColor: primarySeedColor,
         foregroundColor: Colors.white,
-        titleTextStyle: GoogleFonts.oswald(fontSize: 24, fontWeight: FontWeight.bold),
+        titleTextStyle: GoogleFonts.oswald(fontSize: 22, fontWeight: FontWeight.bold),
       ),
-      elevatedButtonTheme: ElevatedButtonThemeData(
-        style: ElevatedButton.styleFrom(
-          foregroundColor: Colors.white,
-          backgroundColor: primarySeedColor,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-          textStyle: GoogleFonts.roboto(fontSize: 18, fontWeight: FontWeight.w500),
-        ),
+      inputDecorationTheme: const InputDecorationTheme(
+        border: OutlineInputBorder(),
       ),
-      cardTheme: CardThemeData( // Perbaikan di sini
+      // [FIXED] Menggunakan CardThemeData, bukan CardTheme
+      cardTheme: CardThemeData(
         elevation: 2.0,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
-      inputDecorationTheme: InputDecorationTheme(
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(8),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(8),
-          borderSide: const BorderSide(color: primarySeedColor, width: 2.0),
-        ),
-      )
     );
 
-    // Dark Theme
+    // Tema Gelap Modern
     final ThemeData darkTheme = ThemeData(
       useMaterial3: true,
-      brightness: Brightness.dark,
       colorScheme: ColorScheme.fromSeed(
         seedColor: primarySeedColor,
         brightness: Brightness.dark,
-        background: Colors.grey[900],
       ),
       textTheme: appTextTheme,
       appBarTheme: AppBarTheme(
-        backgroundColor: Colors.grey[850],
-        foregroundColor: Colors.white,
-        titleTextStyle: GoogleFonts.oswald(fontSize: 24, fontWeight: FontWeight.bold),
+         titleTextStyle: GoogleFonts.oswald(fontSize: 22, fontWeight: FontWeight.bold),
       ),
-      elevatedButtonTheme: ElevatedButtonThemeData(
-        style: ElevatedButton.styleFrom(
-          foregroundColor: Colors.white,
-          backgroundColor: primarySeedColor,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-          textStyle: GoogleFonts.roboto(fontSize: 18, fontWeight: FontWeight.w500),
-        ),
+       inputDecorationTheme: const InputDecorationTheme(
+        border: OutlineInputBorder(),
       ),
-       cardTheme: CardThemeData( // Perbaikan di sini
-        elevation: 3.0,
-        color: Colors.grey[850],
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      // [FIXED] Menggunakan CardThemeData, bukan CardTheme
+      cardTheme: CardThemeData(
+        elevation: 2.0,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       ),
-      inputDecorationTheme: InputDecorationTheme(
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(8),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(8),
-          borderSide: const BorderSide(color: primarySeedColor, width: 2.0),
-        ),
-      )
     );
 
     return Consumer<ThemeProvider>(
       builder: (context, themeProvider, child) {
         return MaterialApp(
-          title: 'YP Home',
+          title: 'YP Tunnel',
           theme: lightTheme,
           darkTheme: darkTheme,
           themeMode: themeProvider.themeMode,
-          debugShowCheckedModeBanner: false,
+           // Provider untuk VpnScreen sekarang berada di atas MaterialApp
           home: const VpnScreen(),
         );
       },
