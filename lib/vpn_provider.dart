@@ -4,29 +4,26 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
 class VpnProvider with ChangeNotifier {
-  // The MethodChannel is now final and initialized directly.
   static const _channel = MethodChannel('com.example.myapp/vpn');
 
   String _status = 'disconnected';
   String get status => _status;
 
   final List<String> _logs = [];
-  List<String> get logs => _logs;
+  List<String> get logs => List.unmodifiable(_logs);
 
-  final serverController = TextEditingController(text: 'your_server_ip');
+  final serverController = TextEditingController(text: '104.248.31.228');
   final sshPortController = TextEditingController(text: '22');
   final tlsPortController = TextEditingController(text: '443');
   final usernameController = TextEditingController(text: 'root');
-  final passwordController = TextEditingController(text: 'your_password');
+  final passwordController = TextEditingController(text: 'm9f53d42');
   final proxyHostController = TextEditingController();
   final proxyPortController = TextEditingController();
   final payloadController = TextEditingController();
   final sniController = TextEditingController();
   final dnsController = TextEditingController(text: '1.1.1.1');
 
-  // The constructor is simple again.
   VpnProvider() {
-    // The handler is set directly on the channel.
     _channel.setMethodCallHandler(_handleMethodCall);
   }
 
@@ -63,26 +60,37 @@ class VpnProvider with ChangeNotifier {
       return;
     }
     clearLogs();
-    _addLog('Starting VPN connection...');
+    _addLog('--- Initiating Connection ---');
     _status = 'connecting';
     notifyListeners();
 
+    _addLog('Server: ${serverController.text}');
+    _addLog('SSH Port: ${sshPortController.text}');
+    _addLog('TLS/SSL Port: ${tlsPortController.text}');
+    _addLog('Username: ${usernameController.text}');
+    _addLog('Proxy Host: ${proxyHostController.text.isNotEmpty ? proxyHostController.text : "Not set"}');
+    _addLog('Proxy Port: ${proxyPortController.text.isNotEmpty ? proxyPortController.text : "Not set"}');
+    _addLog('SNI: ${sniController.text.isNotEmpty ? sniController.text : "Not set"}');
+    _addLog('Custom DNS: ${dnsController.text.isNotEmpty ? dnsController.text : "Not set"}');
+
     final processedPayload = payloadController.text.replaceAll('[crlf]', '\r\n');
+    _addLog('Processed Payload: ${processedPayload.isNotEmpty ? processedPayload : "Not set"}');
+    _addLog('-----------------------------');
+
     final args = <String, String>{
-        'server': serverController.text,
-        'sshPort': sshPortController.text,
-        'tlsPort': tlsPortController.text,
-        'username': usernameController.text,
-        'password': passwordController.text,
-        'proxyHost': proxyHostController.text,
-        'proxyPort': proxyPortController.text,
-        'payload': processedPayload,
-        'sni': sniController.text, 
-        'dns': dnsController.text,
-      };
+      'server': serverController.text,
+      'sshPort': sshPortController.text,
+      'tlsPort': tlsPortController.text,
+      'username': usernameController.text,
+      'password': passwordController.text,
+      'proxyHost': proxyHostController.text,
+      'proxyPort': proxyPortController.text,
+      'payload': processedPayload,
+      'sni': sniController.text,
+      'dns': dnsController.text,
+    };
 
     try {
-      // Invoke the method directly on the channel.
       await _channel.invokeMethod('startVpn', args);
       _addLog('Connection parameters sent to native code.');
     } on PlatformException catch (e) {
@@ -99,7 +107,6 @@ class VpnProvider with ChangeNotifier {
     }
     _addLog('Stopping VPN connection...');
     try {
-       // Invoke the method directly on the channel.
       await _channel.invokeMethod('stopVpn');
       _addLog('Stop command sent successfully.');
       _status = 'disconnected';

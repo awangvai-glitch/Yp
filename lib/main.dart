@@ -1,12 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
-import 'vpn_provider.dart';
-import 'vpn_screen.dart';
+import 'package:myapp/vpn_provider.dart'; // FIX: Corrected import path
+import 'package:myapp/vpn_screen.dart'; // FIX: Corrected import path
 
 void main() {
   runApp(
-    // Gunakan MultiProvider untuk menyediakan semua state management di level teratas
     MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (context) => ThemeProvider()),
@@ -17,9 +16,8 @@ void main() {
   );
 }
 
-// ThemeProvider tetap sama
 class ThemeProvider with ChangeNotifier {
-  ThemeMode _themeMode = ThemeMode.dark;
+  ThemeMode _themeMode = ThemeMode.dark; // Default to dark mode
 
   ThemeMode get themeMode => _themeMode;
 
@@ -34,59 +32,102 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Warna dasar untuk menghasilkan skema warna Material 3
-    const Color primarySeedColor = Colors.deepPurple;
+    const Color primarySeedColor = Colors.blue; // New primary color
 
-    // Definisikan TextTheme yang konsisten menggunakan Google Fonts
     final TextTheme appTextTheme = TextTheme(
       displayLarge: GoogleFonts.oswald(fontSize: 57, fontWeight: FontWeight.bold),
-      titleLarge: GoogleFonts.roboto(fontSize: 22, fontWeight: FontWeight.w500),
+      titleLarge: GoogleFonts.robotoCondensed(fontSize: 22, fontWeight: FontWeight.bold),
       bodyMedium: GoogleFonts.roboto(fontSize: 14),
       bodySmall: GoogleFonts.roboto(fontSize: 12),
       headlineSmall: GoogleFonts.oswald(fontSize: 24, fontWeight: FontWeight.w600),
+      labelLarge: GoogleFonts.robotoCondensed(fontSize: 16, fontWeight: FontWeight.bold),
     );
 
-    // Tema Terang Modern
-    final ThemeData lightTheme = ThemeData(
+    final lightTheme = ThemeData(
       useMaterial3: true,
+      brightness: Brightness.light,
       colorScheme: ColorScheme.fromSeed(
         seedColor: primarySeedColor,
         brightness: Brightness.light,
       ),
       textTheme: appTextTheme,
       appBarTheme: AppBarTheme(
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.black87,
+        elevation: 1,
+        titleTextStyle: appTextTheme.headlineSmall?.copyWith(color: Colors.black87),
+      ),
+      // FIX: Use TabBarThemeData
+      tabBarTheme: TabBarThemeData(
+        labelColor: primarySeedColor,
+        unselectedLabelColor: Colors.black54,
+        indicator: const UnderlineTabIndicator(
+          borderSide: BorderSide(color: primarySeedColor, width: 2),
+        ),
+      ),
+      // FIX: Use CardThemeData
+      cardTheme: CardThemeData(
+        elevation: 0,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        color: Colors.grey[100],
+      ),
+      inputDecorationTheme: InputDecorationTheme(
+        filled: true,
+        fillColor: Colors.white,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: BorderSide.none, 
+        ),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      ),
+      floatingActionButtonTheme: FloatingActionButtonThemeData(
         backgroundColor: primarySeedColor,
         foregroundColor: Colors.white,
-        titleTextStyle: GoogleFonts.oswald(fontSize: 22, fontWeight: FontWeight.bold),
-      ),
-      inputDecorationTheme: const InputDecorationTheme(
-        border: OutlineInputBorder(),
-      ),
-      // [FIXED] Menggunakan CardThemeData, bukan CardTheme
-      cardTheme: CardThemeData(
-        elevation: 2.0,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        elevation: 4,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(100)),
       ),
     );
 
-    // Tema Gelap Modern
-    final ThemeData darkTheme = ThemeData(
+    final darkTheme = ThemeData(
       useMaterial3: true,
+      brightness: Brightness.dark,
       colorScheme: ColorScheme.fromSeed(
         seedColor: primarySeedColor,
         brightness: Brightness.dark,
       ),
       textTheme: appTextTheme,
       appBarTheme: AppBarTheme(
-         titleTextStyle: GoogleFonts.oswald(fontSize: 22, fontWeight: FontWeight.bold),
+        elevation: 1,
+        titleTextStyle: appTextTheme.headlineSmall,
       ),
-       inputDecorationTheme: const InputDecorationTheme(
-        border: OutlineInputBorder(),
+      // FIX: Use TabBarThemeData
+      tabBarTheme: TabBarThemeData(
+        labelColor: primarySeedColor,
+        unselectedLabelColor: Colors.grey[400],
+        indicator: const UnderlineTabIndicator(
+          borderSide: BorderSide(color: primarySeedColor, width: 2),
+        ),
       ),
-      // [FIXED] Menggunakan CardThemeData, bukan CardTheme
+       // FIX: Use CardThemeData
       cardTheme: CardThemeData(
-        elevation: 2.0,
+        elevation: 0,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        color: Colors.grey[900],
+      ),
+       inputDecorationTheme: InputDecorationTheme(
+        filled: true,
+        fillColor: Colors.black26,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: BorderSide.none,
+        ),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      ),
+      floatingActionButtonTheme: FloatingActionButtonThemeData(
+        backgroundColor: Colors.blue.shade300, // FIX: Use a specific shade
+        foregroundColor: Colors.black,
+        elevation: 4,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(100)),
       ),
     );
 
@@ -97,8 +138,8 @@ class MyApp extends StatelessWidget {
           theme: lightTheme,
           darkTheme: darkTheme,
           themeMode: themeProvider.themeMode,
-           // Provider untuk VpnScreen sekarang berada di atas MaterialApp
           home: const VpnScreen(),
+          debugShowCheckedModeBanner: false,
         );
       },
     );
